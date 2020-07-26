@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"os"
 	"strconv"
 	"time"
@@ -12,9 +13,16 @@ type Console struct {
 	button2          bool // toggle time/distance
 	revolutions      int
 	distance         int
+	rpm              int
 	revolution_timer time.Time
 	display_timer    time.Time
 	elapsed_timer    time.Time
+	rpmdata          [5]rpmdatapoint
+}
+
+type rpmdatapoint struct {
+	revolutions int
+	timestamp   time.Duration
 }
 
 func main() {
@@ -29,7 +37,7 @@ func main() {
 		}
 	}(ch)
 
-	c := Console{false, false, 0, 0, time.Now(), time.Now(), time.Now()}
+	c := Console{false, false, 0, 0, 0, time.Now(), time.Now(), time.Now(), [5]rpmdatapoint{}}
 
 	for {
 		select {
@@ -50,6 +58,7 @@ func main() {
 				c.revolution_timer = time.Now()
 				c.display_timer = time.Now()
 				c.elapsed_timer = time.Now()
+				c.rpmdata = [5]rpmdatapoint{}
 			}
 
 		default:
@@ -63,10 +72,20 @@ func main() {
 			// Only update the display every .5 seconds
 			time_duration := time.Since(c.display_timer)
 			if time_duration.Milliseconds() > 500 {
-				c.distance = calculate_distance(c.revolutions) // don't need to calculate this unless we're updating the display
-				output1 := strconv.Itoa(c.revolutions)
+				var output1 string
+				// Button 1 Toggler
+				if c.button1 {
+					output1 = strconv.Itoa(c.revolutions)
+				} else {
+					newdata := rpmdatapoint{c.revolutions, time.Since(c.elapsed_timer)}
+					c.rpmdata = cycle_datapoints(newdata, c.rpmdata)
+					output1 = strconv.Itoa(calculate_rpm(c.rpmdata))
+				}
+
 				var output2 string
+				// Button 2 Toggle
 				if c.button2 {
+					c.distance = calculate_distance(c.revolutions) // calculate distance
 					output2 = strconv.Itoa(c.distance)
 				} else {
 					elapsed := time.Since(c.elapsed_timer)
@@ -85,4 +104,22 @@ func calculate_distance(rev int) int {
 
 func update_display(out1 string, out2 string) {
 	fmt.Printf("%s %s\n", out1, out2)
+}
+
+func cycle_datapoints(newdata rpmdatapoint, a [5]rpmdatapoint) [5]rpmdatapoint {
+	for i := len(a) - 2; i >= 0; i-- {
+		a[i+1] = a[i]
+	}
+	a[0] = newdata
+	//fmt.Println(a)
+	return a
+}
+
+func calculate_rpm(a [5]rpmdatapoint) int {
+	rev_delta := a[0].revolutions - a[4].revolutions
+	time_delta := a[0].timestamp.Seconds() - a[4].timestamp.Seconds()
+	rpm := float64(rev_delta) / time_delta
+	//fmt.Printf("%d %f", rev_delta, time_delta)
+	r := int(math.Ceil(rpm * 60))
+	return r
 }
