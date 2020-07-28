@@ -4,13 +4,14 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"time"
 )
 
 type Console struct {
 	button1          bool // toggle revolutions/rpms
 	button2          bool // toggle time/distance
-	revolutions      int
+	revolutions      uint
 	revolution_timer time.Time // Timer used for spoofing revolutions
 	display_timer    time.Time // Timer used to set display delay (500ms)
 	elapsed_timer    time.Time // Timer used to track workout duration
@@ -20,7 +21,7 @@ type Console struct {
 }
 
 type rpmdatapoint struct {
-	revolutions int
+	revolutions uint
 	timestamp   time.Duration
 }
 
@@ -52,12 +53,10 @@ func main() {
 				c.button2 = !c.button2
 			}
 			if stdin == "r" { // Reset Button
-				c.revolutions = 0
-				//c.distance = 0
-				c.revolution_timer = time.Now()
-				c.display_timer = time.Now()
-				c.elapsed_timer = time.Now()
-				c.rpmdata = [5]rpmdatapoint{}
+				reset_console(&c)
+			}
+			if stdin == "m" { // Debugger, show memory
+				display_memory()
 			}
 
 		default:
@@ -102,14 +101,19 @@ func main() {
 func calc_calories() {
 	//still need to do some research on this, but should be a function of speed or rpms
 }
-func calc_distance(rev int) int {
+func calc_distance(rev uint) uint {
 	// brute force calc for now
 	// this isn't very "real time" though
 	// the results are stepped instead of linear
 	// e.g. 16, 32, 48
+	// being a function of rpmdata is probably better
 	return rev * 16
 }
 func calc_rpm(a *[5]rpmdatapoint) int {
+	// Some of the issues I currently have with calculating RPM is the way I'm polling the data
+	// Because I'm fixed at 60 seconds and the screen refresh and stuff are all .5 or 1s inteverals
+	// Things are getting a bit munged
+	// I should be able to use the time delta to calculate the RPM in real time
 	first, last := a[0], a[len(a)-1]
 	rev_delta := first.revolutions - last.revolutions
 	time_delta := first.timestamp.Seconds() - last.timestamp.Seconds()
@@ -120,6 +124,32 @@ func calc_rpm(a *[5]rpmdatapoint) int {
 }
 func calc_speed() {
 	//speed can be based on calculated RPM
+}
+func calc_watts() {
+	// Watts = .0011RPM3 + .0026RPM2 + 0.5642*RPM  (this might not be accurate but probs a good place to start)
+	// This formula doesnt' line up with the AD3 Load Calibration.  Load 3 = 50RPM = 147.1 Watts, Formula with 50RPM = 172.2W
+	// Ref: https://www.reddit.com/r/crossfit/comments/7bj678/assault_bike_rpm_watts_to_calories_graph/
+
+	// This has some data I might be able to use as well
+	// Ref: https://docs.google.com/spreadsheets/d/1Leq-FH6-2smtYyYNMdphR8L_6yC48N8vYlibjd6FxAQ/edit#gid=1018308001
+
+	// According to our research we found that it takes about 1200 watts to generate 1 calorie on the Echo Bike. 50 rpm = 149 watts x 8seconds = 1192 = 1 calorie.
+	// Also an rpm -> watts -> time/cal chart that could be a handy reference
+	// Ref: https://heatonminded.com/rogue-echo-bike-calorie-conversion-chart/
+
+	// Energy (kCal or "calories") = Av Power (Watts) x Duration (hours) x 3.6.
+	// Not sure how accurate this is, buried in one of the answers
+	// Ref: https://www.fixya.com/support/t25636091-user_guide_manual_schwinn_airdyne_ad3
+
+	// Chart from the AD3 manual that I can use to compare results
+	// https://www.facebook.com/229236226353/photos/a.10153499277066354/10153499324746354/?type=3&theater
+
+	// Elevation calibration from AD3 manual
+	// https://www.facebook.com/229236226353/photos/a.10153499277066354/10153499325521354/?type=3&theater
+
+	// Checking calibration from AD3 manaul
+	// Load 3 = 50 RPM
+	// https://www.facebook.com/229236226353/photos/a.10153499277066354/10153499325536354/?type=3&theater
 }
 
 // Output Functions
@@ -139,7 +169,18 @@ func output_timer(cPtr *Console) string {
 }
 
 // Other Functions
-func cycle_datapoints(cPtr *Console) {
+func cycle_datapoints(cPtr *Console) { // TODO Move this out of a function
+	/*
+		I experimented with cycling rings and linked lists,
+		but I was unsatisfied with the results.
+		rings: Code is needlessly complex for no noticeable speed
+				however, the size was slightly smaller
+		lists: Easy to implement, but magnitudes slower than arrays
+				and slightly larger
+		arrays: For our limited purposes this is small, fast, and
+				fairly easy to follow.  Wrapping this in a function
+				reduces speed.
+	*/
 	newdata := rpmdatapoint{cPtr.revolutions, time.Since(cPtr.elapsed_timer)}
 	a := &cPtr.rpmdata
 	for i := len(a) - 2; i >= 0; i-- {
@@ -147,6 +188,30 @@ func cycle_datapoints(cPtr *Console) {
 	}
 	a[0] = newdata
 }
+
+func reset_console(cPtr *Console) {
+	cPtr.revolutions = 0
+	//c.distance = 0
+	cPtr.revolution_timer = time.Now()
+	cPtr.display_timer = time.Now()
+	cPtr.elapsed_timer = time.Now()
+	cPtr.rpmdata = [5]rpmdatapoint{}
+}
+
 func update_display(out1 string, out2 string) {
 	fmt.Printf("%s %s\n", out1, out2)
+}
+
+// Debugging functions
+func display_memory() {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+	fmt.Printf("Alloc = %v MiB", bToMb(m.Alloc))
+	fmt.Printf("\tTotalAlloc = %v MiB", bToMb(m.TotalAlloc))
+	fmt.Printf("\tSys = %v MiB", bToMb(m.Sys))
+	fmt.Printf("\tNumGC = %v\n", m.NumGC)
+}
+
+func bToMb(b uint64) uint64 {
+	return b / 1024 / 1024
 }
